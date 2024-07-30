@@ -248,6 +248,21 @@ int next_sensor(struct sensor_state sensors[8])
     return best_i;
 }
 
+int num_sensors(struct sensor_state sensors[8])
+{
+    int num = 0;
+    for (int i = 0; i < 8; ++i) {
+        if (sensors[i].channel < 0) {
+            continue;
+        }
+        if (sensors[i].zero_halt) {
+            continue;
+        }
+        num++;
+    }
+    return num;
+}
+
 int show_status(struct sensor_state sensors[8])
 {
     char item[25];
@@ -567,7 +582,10 @@ int main(int argc, char *argv[])
         if (sensor->errors == 0) {
             autoscale(sensor, raw_lux);  // its free when prepped it for the next sample
         }
-        channel_select(handle, -1);
+
+        if (num_sensors(sensors) > 1) {
+            channel_select(handle, -1);
+        }
     }
 
     for (i=0; i<8; i++) {
