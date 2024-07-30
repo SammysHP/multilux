@@ -523,6 +523,7 @@ int main(int argc, char *argv[])
         }
         sensor = &sensors[i];
         channel_select(handle, sensor->channel);
+        usleep(3*1000);  // wait for GPIO to stabilize
         res = setup_veml7700(handle, sensor->gain, sensor->integration);
         if (res < 0) {
             sensor->error = "bad lux conf";
