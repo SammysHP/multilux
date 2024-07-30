@@ -92,7 +92,9 @@ int channel_select(hid_device *handle, int channel)
     if (channel > 7) {
         return -1;
     }
-    return set_gpio(handle, 1<<channel, 0xFC);
+    int res = set_gpio(handle, 1<<channel, 0xFC);
+    usleep(3000);
+    return res;
 }
 
 int setup_veml7700(hid_device *handle, enum veml7700_gain g, enum veml7700_integration i)
