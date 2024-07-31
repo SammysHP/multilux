@@ -4,6 +4,7 @@
 #include <math.h>
 #include <signal.h>
 #include <time.h>
+#include <sys/time.h>
 
 #include <hidapi.h>
 #include "cp2112.h"
@@ -396,6 +397,7 @@ int show_help()
     printf("multilux [--noblink] [--slow] channel_number:integrate_seconds:file_name.tsv [more channels]\n\n");
     printf("    --noblink disables the indicator LEDs.\n");
     printf("    --slow runs I2C at 20kHz instead of 100kHz.\n\n");
+    printf("    --debug Log raw data to multilux_debug.log.\n");
     printf("    channel_number is the GPIO that enables a particular sensor.  Must be between 2 and 7.\n");
     printf("    integrate_seconds is the duration to average readings.\n");
     printf("    file_name will have data appended to it. ':' cannot appear in the file name.\n\n");
@@ -469,6 +471,24 @@ int main(int argc, char *argv[])
     }
     if (has_arg("-h", argc, argv) || has_arg("--help", argc, argv)) {
         return show_help();
+    }
+
+    FILE *debug_fh = NULL;
+    int print_debug_header = !exists("multilux_debug.log");
+    if (has_arg("--debug", argc, argv)) {
+        debug_fh = fopen("multilux_debug.log", "a");
+    }
+    if (debug_fh && print_debug_header) {
+        fprintf(debug_fh,
+            "time\t"
+            "channel\t"
+            "lux_raw\t"
+            "lux\t"
+            "unfiltered_raw\t"
+            "unfiltered\t"
+            "integration_time\t"
+            "gain"
+            "\n");
     }
 
     if (hid_version()->major == HID_API_VERSION_MAJOR && hid_version()->minor == HID_API_VERSION_MINOR && hid_version()->patch == HID_API_VERSION_PATCH) {
@@ -575,6 +595,30 @@ int main(int argc, char *argv[])
             break;
         }
 
+        if (debug_fh) {
+            struct timeval tv;
+            gettimeofday(&tv, NULL);
+
+            fprintf(debug_fh,
+                "%.6f\t"
+                "%i\t"
+                "%i\t"
+                "%.3f\t"
+                "%i\t"
+                "%.3f\t"
+                "%i\t"
+                "%s"
+                "\n",
+                tv.tv_sec + tv.tv_usec / 1e6,
+                sensor->channel,
+                raw_lux,
+                sensor->recent_lux,
+                raw_unf,
+                sensor->recent_unf,
+                veml7700_int_ms[sensor->integration],
+                veml7700_g_str[sensor->gain]);
+        }
+
         //printf("ch: %i   lux: %.3f    unfiltered: %.3f    raw: %i    int: %ims    gain: %s\n", sensor->channel, sensor->recent_lux, sensor->recent_unf, sensor->recent_raw, veml7700_int_ms[sensor->integration], veml7700_g_str[sensor->gain]);
         show_status(sensors);
         maybe_log(sensor, 0);
@@ -592,6 +636,11 @@ int main(int argc, char *argv[])
         if (sensors[i].file_name) {
             maybe_log(&sensors[i], 1);
         }
+    }
+
+    if (debug_fh) {
+        fclose(debug_fh);
+        debug_fh = NULL;
     }
 
     channel_select(handle, -1);
