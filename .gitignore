@@ -1,3 +1,4 @@
 *.o
+/mlx90614_read
 /multilux
 *.tsv

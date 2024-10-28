@@ -66,17 +66,21 @@ endif
 # shared
 
 CFLAGS += -I $(HIDAPI_DIR)/hidapi
-OBJS += multilux.o cp2112.o
+OBJS += cp2112.o
 
-all: multilux
+all: multilux mlx90614_read
 
-$(OBJS): %.o: %.c
+$(OBJS) multilux.o mlx90614_read.o: %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-multilux: $(OBJS)
-	$(CC) $(CFLAGS) $(OBJS) -o multilux$(EXE) $(LIBS)
+multilux: multilux.o $(OBJS)
+	$(CC) $(CFLAGS) multilux.o $(OBJS) -o multilux$(EXE) $(LIBS)
+
+mlx90614_read: mlx90614_read.o $(OBJS)
+	$(CC) $(CFLAGS) mlx90614_read.o $(OBJS) -o mlx90614_read$(EXE) $(LIBS)
 
 clean:
-	rm -f $(OBJS)
+	rm -f $(OBJS) multilux.o mlx90614_read.o
 	rm -f multilux$(EXE)
+	rm -f mlx90614_read$(EXE)
 
