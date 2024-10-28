@@ -41,7 +41,7 @@ endif
 
 # Linux (hidraw)
 ifeq "$(OS)" "linux"
-PKGS = libudev
+PKGS = libudev libmosquitto
 
 ifneq ($(wildcard $(HIDAPI_DIR)),)
 OBJS = $(HIDAPI_DIR)/linux/hid.o

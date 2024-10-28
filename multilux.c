@@ -4,11 +4,13 @@
 #include <math.h>
 #include <signal.h>
 #include <time.h>
+#include <sys/time.h>
 
 #include <hidapi.h>
 #include "cp2112.h"
 #include "veml7700.h"
 #include "mlx90614.h"
+#include "mqtt.h"
 
 #ifdef _WIN32
     #include <windows.h>
@@ -17,6 +19,10 @@
     #include <unistd.h>
     #include <sys/stat.h>
 #endif
+
+#define MQTT_TOPIC_BUFLEN 64
+#define MQTT_MSG_BUFLEN 512
+#define MQTT_MEAN_BUFLEN 32
 
 struct sensor_state
 {
@@ -47,6 +53,8 @@ struct sensor_state
 };
 
 volatile int force_exit;
+
+struct mosquitto *mosq = NULL;
 
 void exit_handler(int sig_num)
 {
@@ -278,13 +286,23 @@ int maybe_log(struct sensor_state *sensor, int force)
 {
     FILE *f;
     time_t t;
+    struct timeval tv;
     double mean = -1, stddev;
     const char *g;
     int i;
     char fulltime[30];
+    char mqtt_topic[MQTT_TOPIC_BUFLEN];
+    char mqtt_msg[MQTT_MSG_BUFLEN];
+    char als_mean_s[MQTT_MEAN_BUFLEN] = "null";
+    char als_stddev_s[MQTT_MEAN_BUFLEN] = "null";
+    char unf_mean_s[MQTT_MEAN_BUFLEN] = "null";
+    char unf_stddev_s[MQTT_MEAN_BUFLEN] = "null";
 
     // has enough time elapsed?
+    // time() and gettimeofday() return slightly different seconds
     t = time(NULL);
+    gettimeofday(&tv, NULL);
+    const double timestamp = tv.tv_sec + tv.tv_usec / 1e6;
     if (!force && sensor->next_report_time > t) {
         return 0;
     }
@@ -301,6 +319,8 @@ int maybe_log(struct sensor_state *sensor, int force)
         mean = sensor->als_sum / (double)sensor->readings;
         stddev = sqrt(fmax(0.0, sensor->als_squares / (double)sensor->readings - pow(mean, 2)));
         fprintf(f, "%.4f\t%.4f\t", mean, stddev);
+        snprintf(als_mean_s,   MQTT_MEAN_BUFLEN, "%.4f", mean);
+        snprintf(als_stddev_s, MQTT_MEAN_BUFLEN, "%.4f", stddev);
     } else {
         fprintf(f, "\t\t");
     }
@@ -314,12 +334,27 @@ int maybe_log(struct sensor_state *sensor, int force)
         mean = sensor->unf_sum / (double)sensor->readings;
         stddev = sqrt(fmax(0.0, sensor->unf_squares / (double)sensor->readings - pow(mean, 2)));
         fprintf(f, "%.4f\t%.4f\t%i\t", mean, stddev, sensor->readings);
+        snprintf(unf_mean_s,   MQTT_MEAN_BUFLEN, "%.4f", mean);
+        snprintf(unf_stddev_s, MQTT_MEAN_BUFLEN, "%.4f", stddev);
     } else {
         fprintf(f, "\t\t%i\t", sensor->readings);
     }
 
     if (sensor->t_amb > NO_TEMPERATURE) {
         fprintf(f, "%.2f\t%.2f\t", sensor->t_amb, sensor->t_obj);
+        snprintf(mqtt_msg, MQTT_MSG_BUFLEN,
+            "{"
+                "\"timestamp\": %.6f, "
+                "\"ambient\": %.2f, "
+                "\"object\": %.2f"
+            "}",
+            timestamp,
+            sensor->t_amb,
+            sensor->t_obj);
+        mqtt_send(
+            mosq,
+            "/multilux/mlx90614",
+            strlen(mqtt_msg), mqtt_msg);
     } else {
         fprintf(f, "\t\t");
     }
@@ -327,6 +362,33 @@ int maybe_log(struct sensor_state *sensor, int force)
     g = veml7700_g_str[sensor->gain];
     i = veml7700_int_ms[sensor->integration];
     fprintf(f, "%s\t%ims\t%s\n", g, i, sensor->error);
+
+    snprintf(mqtt_msg, MQTT_MSG_BUFLEN,
+        "{"
+            "\"timestamp\": %.6f, "
+            "\"als_mean\": %s, "
+            "\"als_stddev\": %s, "
+            "\"unf_mean\": %s, "
+            "\"unf_stddev\": %s, "
+            "\"readings\": %d, "
+            "\"gain\": \"%s\", "
+            "\"integration\": %d, "
+            "\"error\": \"%.50s\""
+        "}",
+        timestamp,
+        als_mean_s,
+        als_stddev_s,
+        unf_mean_s,
+        unf_stddev_s,
+        sensor->readings,
+        g,
+        i,
+        sensor->error);
+    snprintf(mqtt_topic, MQTT_TOPIC_BUFLEN, "/multilux/veml7700/%d", sensor->channel);
+    mqtt_send(
+        mosq,
+        mqtt_topic,
+        strlen(mqtt_msg), mqtt_msg);
 
     // clean up
     fclose(f);
@@ -513,6 +575,14 @@ int main(int argc, char *argv[])
         }
     }
 
+    mosquitto_lib_init();
+
+    // TODO Read from command line
+    mosq = mqtt_connect(
+        "localhost", 1883,
+        NULL, NULL,
+        0);
+
     signal(SIGINT, exit_handler);
     printf("Press control-c at any time to pause data collection and change the channel configuration.\n");
 
@@ -579,6 +649,10 @@ int main(int argc, char *argv[])
     channel_select(handle, -1);
     hid_close(handle);
     hid_exit();
+
+    mosquitto_disconnect(mosq);
+    mosquitto_destroy(mosq);
+    mosquitto_lib_cleanup();
 #ifdef _WIN32
     system("pause");
 #endif
