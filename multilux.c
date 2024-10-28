@@ -49,6 +49,8 @@ struct sensor_state
 
 volatile int force_exit;
 
+int do_zero_halt;
+
 void exit_handler(int sig_num)
 {
     printf("\nSaving data and cleaning up connections....\n");
@@ -322,7 +324,7 @@ int maybe_log(struct sensor_state *sensor, int force)
     }
    
     // not the best place for this but the average is here
-    if (mean == 0.0 && sensor->gain == ALS_GAIN_2X && sensor->integration == ALS_IT_800ms) {
+    if (do_zero_halt && mean == 0.0 && sensor->gain == ALS_GAIN_2X && sensor->integration == ALS_IT_800ms) {
         sensor->zero_halt = 1;
     }
  
@@ -397,6 +399,7 @@ int show_help()
     printf("multilux [--noblink] [--slow] channel_number:integrate_seconds:file_name.tsv [more channels]\n\n");
     printf("    --noblink disables the indicator LEDs.\n");
     printf("    --slow runs I2C at 20kHz instead of 100kHz.\n\n");
+    printf("    --nohalt Don't stop when light turns off.\n\n");
     printf("    --debug Log raw data to multilux_debug.log.\n");
     printf("    channel_number is the GPIO that enables a particular sensor.  Must be between 2 and 7.\n");
     printf("    integrate_seconds is the duration to average readings.\n");
@@ -490,6 +493,8 @@ int main(int argc, char *argv[])
             "gain"
             "\n");
     }
+
+    do_zero_halt = !has_arg("--nohalt", argc, argv);
 
     if (hid_version()->major == HID_API_VERSION_MAJOR && hid_version()->minor == HID_API_VERSION_MINOR && hid_version()->patch == HID_API_VERSION_PATCH) {
     }
