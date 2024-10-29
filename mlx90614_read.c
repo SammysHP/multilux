@@ -9,6 +9,7 @@
 #include <hidapi.h>
 #include "cp2112.h"
 #include "mlx90614.h"
+#include "mqtt.h"
 
 #ifdef _WIN32
     #include <windows.h>
@@ -17,6 +18,8 @@
     #include <unistd.h>
     #include <sys/stat.h>
 #endif
+
+#define MQTT_MSG_BUFLEN 512
 
 volatile int force_exit;
 
@@ -35,6 +38,8 @@ int main(int argc, char *argv[])
 {
     int res, raw_ir;
     hid_device *handle;
+
+    mosquitto_lib_init();
 
     if (hid_version()->major != HID_API_VERSION_MAJOR || hid_version()->minor != HID_API_VERSION_MINOR || hid_version()->patch != HID_API_VERSION_PATCH) {
         fprintf(stderr, "Warning: compile-time version is different than runtime version of hidapi.\n\n");
@@ -74,6 +79,11 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    struct mosquitto *mosq = mqtt_connect(
+        "localhost", 1883,
+        NULL, NULL,
+        0);
+
     signal(SIGINT, exit_handler);
 
     while (!force_exit) {
@@ -84,20 +94,41 @@ int main(int argc, char *argv[])
 
         struct timeval tv;
         gettimeofday(&tv, NULL);
+        const double timestamp = tv.tv_sec + tv.tv_usec / 1e6;
+
         printf(
             "%.6f\t"
             "%.2f\t"
             "%.2f\n",
-            tv.tv_sec + tv.tv_usec / 1e6,
+            timestamp,
             t_amb,
             t_obj);
         fflush(stdout);
+
+        char mqtt_msg[MQTT_MSG_BUFLEN];
+        snprintf(mqtt_msg, MQTT_MSG_BUFLEN,
+            "{"
+                "\"timestamp\": %.6f, "
+                "\"ambient\": %.2f, "
+                "\"object\": %.2f"
+            "}",
+            timestamp,
+            t_amb,
+            t_obj);
+        mqtt_send(
+            mosq,
+            "/multilux/mlx90614",
+            strlen(mqtt_msg), mqtt_msg);
 
         usleep(1 * 1000 * 1000);
     }
 
     hid_close(handle);
     hid_exit();
+
+    mosquitto_disconnect(mosq);
+    mosquitto_destroy(mosq);
+    mosquitto_lib_cleanup();
 
     return 0;
 }
