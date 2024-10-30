@@ -278,7 +278,7 @@ int maybe_log(struct sensor_state *sensor, int force)
 {
     FILE *f;
     time_t t;
-    double mean, stddev;
+    double mean = -1, stddev;
     const char *g;
     int i;
     char fulltime[30];
@@ -297,9 +297,9 @@ int maybe_log(struct sensor_state *sensor, int force)
     strftime(fulltime, 30, "%a %b %d %H:%M:%S %Y", localtime(&t));
     fprintf(f, "%s\t%ld\t", fulltime, t);
 
-    mean = sensor->als_sum / (double)sensor->readings;
-    stddev = sqrt(sensor->als_squares / (double)sensor->readings - pow(mean, 2));
     if (sensor->readings) {
+        mean = sensor->als_sum / (double)sensor->readings;
+        stddev = sqrt(fmax(0.0, sensor->als_squares / (double)sensor->readings - pow(mean, 2)));
         fprintf(f, "%.4f\t%.4f\t", mean, stddev);
     } else {
         fprintf(f, "\t\t");
@@ -310,9 +310,9 @@ int maybe_log(struct sensor_state *sensor, int force)
         sensor->zero_halt = 1;
     }
  
-    mean = sensor->unf_sum / (double)sensor->readings;
-    stddev = sqrt(sensor->unf_squares / (double)sensor->readings - pow(mean, 2));
     if (sensor->readings) {
+        mean = sensor->unf_sum / (double)sensor->readings;
+        stddev = sqrt(fmax(0.0, sensor->unf_squares / (double)sensor->readings - pow(mean, 2)));
         fprintf(f, "%.4f\t%.4f\t%i\t", mean, stddev, sensor->readings);
     } else {
         fprintf(f, "\t\t%i\t", sensor->readings);
