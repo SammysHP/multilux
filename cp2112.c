@@ -94,7 +94,7 @@ int set_gpio(hid_device *handle, int values, int bitmask)
 }
 
 char crc_naive(char *buf, int len)
-{   
+{
     int i, bit;
     char res = 0;
     for (i=0; i<len; i++) {
@@ -154,7 +154,7 @@ int i2c_write(hid_device *handle, int address, unsigned char *data, int len)
         return -1;
     }
     buf[0] = DATA_WRITE;
-    buf[1] = address;
+    buf[1] = address << 1;
     buf[2] = len;
     memcpy(buf+3, data, len);
     res = hid_write(handle, buf, len+3);
@@ -186,12 +186,12 @@ int i2c_wait(hid_device *handle)
 
 int read_word(hid_device *handle, int address, int reg, int reply_length)
 {
-    // performs a write-read that has been stripped down to the bare minimum for this sensor
+    // performs a write-read that has been stripped down to the bare minimum for these sensors
     unsigned char buf[10];
     struct cp2112_status_reply status;
     int res;
     buf[0] = DATA_WRITE_READ;
-    buf[1] = address;
+    buf[1] = address << 1;
     buf[2] = 0;  // reply length high byte
     buf[3] = reply_length & 0xFF;
     buf[4] = 1;  // send length
@@ -235,6 +235,9 @@ int read_word(hid_device *handle, int address, int reg, int reply_length)
     if (buf[0] == DATA_READ_RESPONSE && buf[2] != reply_length) {
         return -1;
     }
+    if (buf[2] == 1) {
+        return buf[3];
+    }
     if (buf[2] == 2) {
         return (buf[4]<<8) + buf[3];
     }
@@ -242,5 +245,29 @@ int read_word(hid_device *handle, int address, int reg, int reply_length)
         return (buf[5]<<16) + (buf[4]<<8) + buf[3];
     }
     return -1;
+}
+
+int cleanup(hid_device *handle)
+{
+    hid_close(handle);
+    hid_exit();
+#ifdef _WIN32
+    system("pause");
+#endif
+    return 0;
+}
+
+int has_address(int address, const int address_list[])
+{
+    int i;
+    for (i=0; address_list[i]!=END_LIST; i++) {
+        if (address_list[i] == ANY_ADDRESS) {
+            return true;
+        }
+        if (address_list[i] == address) {
+            return true;
+        }
+    }
+    return false;
 }
 

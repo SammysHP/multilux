@@ -1,3 +1,9 @@
+#ifndef CP2112_H
+#define CP2112_H
+
+#include <stdbool.h>
+#include <hidapi.h>
+
 #define CP2112_VID 0x10C4
 #define CP2112_PID 0xEA90
 
@@ -32,6 +38,12 @@ struct cp2112_status_reply {
 #define CRC_POLYNOMIAL 0x07
 // the X^8 term is implied
 
+#define MAIN_CHANNEL -1
+#define NO_CHANNEL -1
+#define DUMMY_CHANNEL -2
+#define ANY_ADDRESS -1
+#define END_LIST -10
+
 int dump_buffer(unsigned char *buf, int len);
 int cancel_transfer(hid_device *handle);
 int setup_gpio(hid_device *handle, int use_leds);
@@ -43,4 +55,7 @@ int i2c_status(hid_device *handle, struct cp2112_status_reply *status);
 int i2c_write(hid_device *handle, int address, unsigned char *data, int len);
 int i2c_wait(hid_device *handle);
 int read_word(hid_device *handle, int address, int reg, int reply_length);
+int cleanup(hid_device *handle);
+int has_address(int address, const int *address_list);
 
+#endif /* CP2112_H */

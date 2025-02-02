@@ -65,8 +65,8 @@ endif
 
 # shared
 
-CFLAGS += -I $(HIDAPI_DIR)/hidapi
-OBJS += multilux.o cp2112.o
+CFLAGS += -I $(HIDAPI_DIR)/hidapi -Wall
+OBJS += multilux.o cp2112.o stats.o veml7700.o mlx90614.o ltr390uv.o
 
 all: multilux
 
