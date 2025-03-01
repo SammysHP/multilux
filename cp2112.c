@@ -187,6 +187,7 @@ int i2c_wait(hid_device *handle)
 int read_word(hid_device *handle, int address, int reg, int reply_length)
 {
     // performs a write-read that has been stripped down to the bare minimum for these sensors
+    // setting reg to -1 will disable the register request
     unsigned char buf[10];
     struct cp2112_status_reply status;
     int res;
@@ -194,9 +195,16 @@ int read_word(hid_device *handle, int address, int reg, int reply_length)
     buf[1] = address << 1;
     buf[2] = 0;  // reply length high byte
     buf[3] = reply_length & 0xFF;
-    buf[4] = 1;  // send length
-    buf[5] = reg;  // payload
-    res = hid_write(handle, buf, 6);
+    if (reg >= 0) {
+        buf[4] = 1;  // send length
+        buf[5] = reg & 0xFF;  // payload
+        res = hid_write(handle, buf, 6);
+    } else {
+        buf[0] = DATA_READ;
+        buf[4] = 0;
+        buf[5] = 0;
+        res = hid_write(handle, buf, 5);
+    }
     if (res < 0) {
         return res;
     }

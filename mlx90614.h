@@ -24,6 +24,7 @@ struct mlx90614_state
     struct running_stats t_amb_stats;
     struct running_stats t_obj_stats;
     char mode;
+    struct timespec wait_until;
 };
 
 double compute_celsius(int n);

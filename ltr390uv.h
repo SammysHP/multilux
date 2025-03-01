@@ -9,8 +9,7 @@ enum ltr390uv_registers {
     LTR_U0 = 0x21, LTR_U1, LTR_U2, LTR_L0, LTR_L1, LTR_L2};
 
 enum ltr_integration {
-    LTR_I_400MS = 0x0, LTR_I_200MS = 0x1 << 4, LTR_I_100MS = 0x2 << 4,
-    LTR_I_50MS = 0x3 << 4, LTR_I_25MS = 0x4 << 4, LTR_I_13MS = 0x5 << 4};
+    LTR_I_400MS = 0x0, LTR_I_200MS, LTR_I_100MS, LTR_I_50MS, LTR_I_25MS, LTR_I_13MS};
 
 enum ltr_rate {
     LTR_R_25MS = 0x0, LTR_R_50MS, LTR_R_100MS, LTR_R_200MS, LTR_R_500MS, LTR_R_1000MS,
@@ -18,6 +17,9 @@ enum ltr_rate {
 
 enum ltr_gain {
     LTR_1X = 0x0, LTR_3X, LTR_6X, LTR_9X, LTR_18X};
+
+enum ltr_fsm {
+    MEASURING_ALS, MEASURING_UVB};
 
 #define LTR_MAX_X LTR_18X
 #define LTR_MIN_X LTR_1X
@@ -36,7 +38,11 @@ struct ltr390uv_state
     enum ltr_gain uvs_gain;
     enum ltr_integration uvs_integration;
     enum ltr_rate uvs_rate;
+    enum ltr_gain prev_gain;
+    enum ltr_integration prev_integration;
+    enum ltr_rate prev_rate;
     int uv_mode;
+    int prev_mode;
     struct running_stats als_stats;
     struct running_stats uvs_stats;
     int als_raw;
@@ -45,13 +51,15 @@ struct ltr390uv_state
     double uv_uw;
     double uvi;
     char mode;
+    struct timespec wait_until;
+    enum ltr_fsm read_state;
 };
 
 
 // use the ltr_integration enum to access this
-extern int ltr_int_ms[128];
-extern int ltr_more_int[128];
-extern int ltr_less_int[128];
+extern const int ltr_int_ms[];
+extern const int ltr_more_int[];
+extern const int ltr_less_int[];
 
 // use the ltr_rate enum to access this
 extern const int ltr_faster_rate[];
@@ -63,9 +71,7 @@ extern const int ltr_gain_scale[];
 extern const int ltr_more_gain[];
 extern const int ltr_less_gain[];
 
-int ltr390uv_init(void);
-int config_ltr390uv(hid_device *handle, int mode, int gain, int integration, int rate);
-int setup_ltr390uv(hid_device *handle, struct ltr390uv_state *sensor);
+int setup_ltr390uv(hid_device *handle, struct ltr390uv_state *sensor, int force);
 int ltr390uv_clear_stats(struct ltr390uv_state *sensor);
 int ltr390uv_check(hid_device *handle, int address, int force);
 int ltr390uv_done(hid_device *handle);

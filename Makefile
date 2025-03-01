@@ -33,9 +33,9 @@ endif
 
 # Mac
 ifeq "$(OS)" "macos"
-CFLAGS+=-arch x86_64 -arch arm64
-LIBS=-framework IOKit -framework CoreFoundation -framework AppKit -lm
-OBJS=$(HIDAPI_DIR)/mac/hid.o
+PKGS = hidapi
+CFLAGS += $(shell pkg-config --cflags $(PKGS))
+LIBS += $(shell pkg-config --libs $(PKGS)) -framework IOKit -framework CoreFoundation -framework AppKit -lm
 EXE=
 endif
 
@@ -66,7 +66,7 @@ endif
 # shared
 
 CFLAGS += -I $(HIDAPI_DIR)/hidapi -Wall
-OBJS += multilux.o cp2112.o stats.o veml7700.o mlx90614.o ltr390uv.o
+OBJS += multilux.o cp2112.o stats.o tick.o tca9548a.o veml7700.o mlx90614.o ltr390uv.o
 
 all: multilux
 

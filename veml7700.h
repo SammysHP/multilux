@@ -13,12 +13,15 @@ struct veml7700_state
 {
     enum veml7700_gain gain;
     enum veml7700_integration integration;
+    enum veml7700_gain prev_gain;
+    enum veml7700_integration prev_integration;
     struct running_stats als_stats;
     struct running_stats unf_stats;
     int raw;
     double lux;
     double unf;
     char mode;
+    struct timespec wait_until;
 };
 
 // use the ALS_IT enum to access this
@@ -42,7 +45,9 @@ extern const int veml7700_addresses[];
 extern char *veml7700_mode_help;
 extern char *veml7700_debug_header;
 
-int veml7700_setup(hid_device *handle, enum veml7700_gain g, enum veml7700_integration i);
+int veml7700_sleep(hid_device *handle);
+int veml7700_setup(hid_device *handle, struct veml7700_state *sensor, int force);
+int veml7700_tick(struct veml7700_state *sensor);
 double lame_lux_correction(double n);
 double smooth_lux_correction(double n);
 int veml7700_autoscale(struct veml7700_state *sensor, int raw);

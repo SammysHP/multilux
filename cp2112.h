@@ -43,6 +43,7 @@ struct cp2112_status_reply {
 #define DUMMY_CHANNEL -2
 #define ANY_ADDRESS -1
 #define END_LIST -10
+#define NO_REGISTER -1
 
 int dump_buffer(unsigned char *buf, int len);
 int cancel_transfer(hid_device *handle);

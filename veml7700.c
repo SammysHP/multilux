@@ -4,6 +4,7 @@
 #include <hidapi.h>
 #include "cp2112.h"
 #include "stats.h"
+#include "tick.h"
 #include "veml7700.h"
 
 #ifdef _WIN32
@@ -26,45 +27,54 @@ const char *veml7700_g_str[]    = {"1", "2", "1/8", "1/4"};
 
 // to make auto-scaling logic easier
 // use the enums to access these
-const int v7700_more_gain[] = {ALS_GAIN_2X, -1, ALS_GAIN_4DIV, ALS_GAIN_1X};
-const int v7700_less_gain[] = {ALS_GAIN_4DIV, ALS_GAIN_1X, -1, ALS_GAIN_8DIV};
-const int v7700_more_int[] = {ALS_IT_200ms, ALS_IT_400ms, ALS_IT_800ms, -1, -1, -1, -1, -1, ALS_IT_100ms, -1, -1, -1, ALS_IT_50ms};
-const int v7700_less_int[] = {ALS_IT_50ms, ALS_IT_100ms, ALS_IT_200ms, ALS_IT_400ms, -1, -1, -1, -1, ALS_IT_25ms, -1, -1, -1, -1};
+const int v7700_more_gain[] = {ALS_GAIN_2X, ALS_GAIN_2X, ALS_GAIN_4DIV, ALS_GAIN_1X};
+const int v7700_less_gain[] = {ALS_GAIN_4DIV, ALS_GAIN_1X, ALS_GAIN_8DIV, ALS_GAIN_8DIV};
+const int v7700_more_int[] = {ALS_IT_200ms, ALS_IT_400ms, ALS_IT_800ms, ALS_IT_800ms, -1, -1, -1, -1, ALS_IT_100ms, -1, -1, -1, ALS_IT_50ms};
+const int v7700_less_int[] = {ALS_IT_50ms, ALS_IT_100ms, ALS_IT_200ms, ALS_IT_400ms, -1, -1, -1, -1, ALS_IT_25ms, -1, -1, -1, ALS_IT_25ms};
 
 const int veml7700_addresses[] = {0x10, END_LIST};
 
-int veml7700_setup(hid_device *handle, enum veml7700_gain g, enum veml7700_integration i)
+int veml7700_sleep(hid_device *handle)
+{
+    unsigned char buf[5];
+    buf[0] = ALS_CONF;
+    buf[1] = 0x01;
+    buf[2] = 0x00;
+    return i2c_write(handle, VEML7700_ADDR, buf, 3);
+}
+
+int veml7700_setup(hid_device *handle, struct veml7700_state *sensor, int force)
 {
     // whatever is calling this takes care of enable
     unsigned char buf[5];
-    int res;
-    /*
+    int res, i, g;
+    i = sensor->integration;
+    g = sensor->gain;
+
+    res = veml7700_sleep(handle);
+    if (res < 0) {
+        return res;
+    }
+
+    // make sure its not in a weird mode
     buf[0] = VEML_POWER;
-    buf[1] = 0x00;  // low
-    buf[2] = 0x00;  // high
-    res =  i2c_write(handle, VEML7700_ADDR, buf, 3);
-    if (res < 0) {
-        return res;
-    }
-    */
-    // put sensor in standby and change settings
-    // (why did they arrange the reserved bits so that integration is split across 2 bytes?)
-    buf[0] = ALS_CONF;
-    //buf[1] = ((i & 0x03) << 6) | 0x01;
-    //buf[2] = ((i & 0x0C) >> 2) | ((g & 0x03) << 3);
-    buf[1] = 0x01;
+    buf[1] = 0x00;
     buf[2] = 0x00;
-    res = i2c_write(handle, VEML7700_ADDR, buf, 3);
+    if (force) {
+        res = i2c_write(handle, VEML7700_ADDR, buf, 3);
+    }
     if (res < 0) {
         return res;
     }
-    // bring it out of standby
+
+    // bring it out of standby and start a conversion
+    // (why did they arrange the reserved bits so that integration is split across 2 bytes?)
     buf[0] = ALS_CONF;
     buf[1] = ((i & 0x03) << 6);
     buf[2] = ((i & 0x0C) >> 2) | ((g & 0x03) << 3);
     res = i2c_write(handle, VEML7700_ADDR, buf, 3);
-    // wait for warmup
-    usleep(2500);
+    sensor->prev_integration = i;
+    sensor->prev_gain = g;
     return res;
 }
 
@@ -90,25 +100,44 @@ int veml7700_clear_stats(struct veml7700_state *sensor)
     return 0;
 }
 
+int veml7700_tick(struct veml7700_state *sensor)
+{
+    // extra 3 (2.5 according to datasheet) is for sensor warmup
+    tick_sync_increment(&sensor->wait_until, 3 + veml7700_int_ms[sensor->integration] * 3 / 2);
+    return 0;
+}
+
 int veml7700_read(hid_device *handle, struct veml7700_state *sensor)
 {
-    int raw_lux, raw_unf;
-    veml7700_autoscale(sensor, sensor->raw);
+    // this chip has 2 ADCs so we can read both in 1 pass
+    int raw_lux, raw_unf, res;
+    cancel_transfer(handle);
     if (sensor->mode=='*' || sensor->mode=='L') {
-        cancel_transfer(handle);
         raw_lux = read_word(handle, VEML7700_ADDR, ALS_DATA, 2);
     }
     if (sensor->mode=='*' || sensor->mode=='U') {
-        cancel_transfer(handle);
         raw_unf = read_word(handle, VEML7700_ADDR, UNFILTERED_DATA, 2);
     }
     if (raw_lux < 0 || raw_unf < 0) {
+        tick_sync_increment(&sensor->wait_until, 1000);
         return 1;
     } else {
         compute_lux(sensor, raw_lux, raw_unf);
         update_stats(&sensor->als_stats, sensor->lux);
         update_stats(&sensor->unf_stats, sensor->unf);
     }
+    if (sensor->mode=='*' || sensor->mode=='L') {
+        veml7700_autoscale(sensor, raw_lux);
+    } else {
+        veml7700_autoscale(sensor, raw_unf);
+    }
+    // start a new conversion
+    res = veml7700_setup(handle, sensor, 0);
+    if (res) {
+        tick_sync_increment(&sensor->wait_until, 1000);
+        return res;
+    }
+    veml7700_tick(sensor);
     return 0;
 }
 
@@ -133,41 +162,38 @@ double smooth_lux_correction(double n)
 
 int veml7700_autoscale(struct veml7700_state *sensor, int raw)
 {
-    // returns true if another sample is needed
+    // returns true if reconfiguration may be needed
     // their sample algo leaves much to be desired
     // the core goal is to have 100ms integration time
     // play with gain as the primary adjustment
+    // "At lux levels above 100 lux GAIN level 1 and 2 should not be used as the sensor becomes non-linear."
     int i = veml7700_int_ms[sensor->integration];
     if (i>100 && raw>200 && raw<10000) {
         sensor->integration = v7700_less_int[sensor->integration];
-        if (sensor->gain != ALS_GAIN_2X) {
-            sensor->gain = v7700_more_gain[sensor->gain];
-        }
+        sensor->gain = v7700_more_gain[sensor->gain];
         return 1;
     }
     if (i<100 && raw>200 && raw<10000) {
         sensor->integration = v7700_more_int[sensor->integration];
-        if (sensor->gain != ALS_GAIN_8DIV) {
-            sensor->gain = v7700_less_gain[sensor->gain];
-        }
+        sensor->gain = v7700_less_gain[sensor->gain];
         return 1;
     }
     if (raw > 100 && raw < 10000) {
         return 0;
     }
-    if (raw <= 100 && v7700_more_gain[sensor->gain] != -1) {
+    if (raw <= 100 && sensor->gain != ALS_GAIN_2X) {
         sensor->gain = v7700_more_gain[sensor->gain];
         return 1;
     }
-    if (raw <= 100 && v7700_more_int[sensor->integration] != -1) {
+    if (raw <= 100 && sensor->integration != ALS_IT_800ms) {
         sensor->integration = v7700_more_int[sensor->integration];
         return 1;
     }
-    if (raw >= 10000 && v7700_less_gain[sensor->gain] != -1) {
+    if (raw >= 10000 && sensor->gain != ALS_GAIN_8DIV) {
         sensor->gain = v7700_less_gain[sensor->gain];
         return 1;
     }
-    if (raw >= 10000 && v7700_less_int[sensor->integration] != -1) {
+    if (raw >= 10000 && sensor->integration != ALS_IT_25ms) {
         sensor->integration = v7700_less_int[sensor->integration];
         return 1;
     }

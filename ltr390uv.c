@@ -2,6 +2,7 @@
 #include <hidapi.h>
 #include "cp2112.h"
 #include "stats.h"
+#include "tick.h"
 #include "ltr390uv.h"
 
 // use the ltr_rate enum to access this
@@ -16,42 +17,15 @@ const int ltr_gain_scale[] = {1, 3, 6, 9, 18};
 
 // to make auto-scaling logic easier
 // use the enums to access these
-const int ltr_more_gain[] = {LTR_3X, LTR_6X, LTR_9X, LTR_9X};
-const int ltr_less_gain[] = {LTR_1X, LTR_1X, LTR_3X, LTR_9X};
+const int ltr_more_gain[] = {LTR_3X, LTR_6X, LTR_9X, LTR_18X, LTR_18X};
+const int ltr_less_gain[] = {LTR_1X, LTR_1X, LTR_3X, LTR_6X, LTR_9X};
 
 // use the ltr_integration enum to access this
-// (suddenly this pattern is much less efficient than with the VEML7700)
-int ltr_int_ms[128];
-int ltr_more_int[128];
-int ltr_less_int[128];
+const int ltr_int_ms[] = {400, 200, 100, 50, 25, 13};
+const int ltr_more_int[] = {LTR_I_400MS, LTR_I_400MS, LTR_I_200MS, LTR_I_100MS, LTR_I_50MS, LTR_I_25MS};
+const int ltr_less_int[] = {LTR_I_200MS, LTR_I_100MS, LTR_I_50MS, LTR_I_25MS, LTR_I_13MS, LTR_I_13MS};
 
 const int ltr390uv_addresses[] = {0x53, END_LIST};
-
-int ltr390uv_init()
-{
-    ltr_int_ms[LTR_I_400MS] = 400;
-    ltr_int_ms[LTR_I_200MS] = 200;
-    ltr_int_ms[LTR_I_100MS] = 100;
-    ltr_int_ms[LTR_I_50MS] = 50;
-    ltr_int_ms[LTR_I_25MS] = 25;
-    ltr_int_ms[LTR_I_13MS] = 13;
-
-    ltr_more_int[LTR_I_400MS] = LTR_I_400MS;
-    ltr_more_int[LTR_I_200MS] = LTR_I_400MS;
-    ltr_more_int[LTR_I_100MS] = LTR_I_200MS;
-    ltr_more_int[LTR_I_50MS] = LTR_I_100MS;
-    ltr_more_int[LTR_I_25MS] = LTR_I_50MS;
-    ltr_more_int[LTR_I_13MS] = LTR_I_25MS;
-
-    ltr_less_int[LTR_I_400MS] = LTR_I_200MS;
-    ltr_less_int[LTR_I_200MS] = LTR_I_100MS;
-    ltr_less_int[LTR_I_100MS] = LTR_I_50MS;
-    ltr_less_int[LTR_I_50MS] = LTR_I_25MS;
-    ltr_less_int[LTR_I_25MS] = LTR_I_13MS;
-    ltr_less_int[LTR_I_13MS] = LTR_I_13MS;
-
-    return 0;
-}
 
 int ltr390uv_clear_stats(struct ltr390uv_state *sensor)
 {
@@ -65,52 +39,96 @@ int ltr390uv_clear_stats(struct ltr390uv_state *sensor)
     return 0;
 }
 
-int config_ltr390uv(hid_device *handle, int mode, int gain, int integration, int rate)
+int ltr_same_settings(struct ltr390uv_state *sensor)
+{
+    enum ltr_gain g;
+    enum ltr_integration i;
+    enum ltr_rate r;
+    if (sensor->uv_mode != sensor->prev_mode) {
+        return false;
+    }
+    if (sensor->uv_mode) {
+        g = sensor->uvs_gain;
+        i = sensor->uvs_integration;
+        r = sensor->uvs_rate;
+    } else {
+        g = sensor->als_gain;
+        i = sensor->als_integration;
+        r = sensor->als_rate;
+    }
+    if (g != sensor->prev_gain) {
+        return false;
+    }
+    if (i != sensor->prev_integration) {
+        return false;
+    }
+    if (r != sensor->prev_rate) {
+        return false;
+    }
+    return true;
+}
+
+int setup_ltr390uv(hid_device *handle, struct ltr390uv_state *sensor, int force)
 {
     // whatever is calling this takes care of enable
     unsigned char buf[5];
     int res;
+    enum ltr_gain g;
+    enum ltr_integration i;
+    enum ltr_rate r;
+    if (!force && ltr_same_settings(sensor)) {
+        return 0;
+    }
+
+    if (sensor->uv_mode) {
+        g = sensor->uvs_gain;
+        i = sensor->uvs_integration;
+        r = sensor->uvs_rate;
+    } else {
+        g = sensor->als_gain;
+        i = sensor->als_integration;
+        r = sensor->als_rate;
+    }
+
     // put it into standby
     buf[0] = LTR_CONTROL;
-    buf[1] = (mode << 3) & 0x8;
+    buf[1] = (sensor->uv_mode << 3) & 0x8;
     res = i2c_write(handle, LTR390UV_ADDR, buf, 2);
     if (res < 0) {
         return res;
     }
     // set up integration
-    while (ltr_int_ms[integration] > ltr_rate_ms[rate]) {
-        rate = ltr_slower_rate[rate];
-    }
-    buf[0] = LTR_RATE;
-    buf[1] = (integration & 0x70) | (rate & 0x07);
-    res = i2c_write(handle, LTR390UV_ADDR, buf, 2);
-    if (res < 0) {
-        return res;
+    if ((i != sensor->prev_integration && r != sensor->prev_rate) || force) {
+        buf[0] = LTR_RATE;
+        buf[1] = ((i & 0x7) << 4) | (r & 0x7);
+        res = i2c_write(handle, LTR390UV_ADDR, buf, 2);
+        if (res < 0) {
+            return res;
+        }
     }
     // set up gain
-    buf[0] = LTR_GAIN;
-    buf[1] = gain & 0x07;
-    res = i2c_write(handle, LTR390UV_ADDR, buf, 2);
-    if (res < 0) {
-        return res;
+    if (g != sensor->prev_gain || force) {
+        buf[0] = LTR_GAIN;
+        buf[1] = g & 0x07;
+        res = i2c_write(handle, LTR390UV_ADDR, buf, 2);
+        if (res < 0) {
+            return res;
+        }
     }
     // bring it out of standby
     buf[0] = LTR_CONTROL;
-    buf[1] = 0x02 | ((mode << 3) & 0x8);
+    buf[1] = 0x02 | ((sensor->uv_mode << 3) & 0x8);
     res = i2c_write(handle, LTR390UV_ADDR, buf, 2);
+
+    sensor->prev_mode = sensor->uv_mode;
+    sensor->prev_gain = g;
+    sensor->prev_integration = i;
+    sensor->prev_rate = r;
+
     if (res < 0) {
         return res;
     }
     return 0;
-}
-
-int setup_ltr390uv(hid_device *handle, struct ltr390uv_state *sensor)
-{
-    // whatever is calling this takes care of enable
-    if (sensor->uv_mode) {
-        return config_ltr390uv(handle, 1, sensor->uvs_gain, sensor->uvs_integration, sensor->uvs_rate);
-    }
-    return config_ltr390uv(handle, 0, sensor->als_gain, sensor->als_integration, sensor->als_rate);
 }
 
 int ltr390uv_check(hid_device *handle, int address, int force)
@@ -173,24 +191,45 @@ int ltr390uv_read_raw(hid_device *handle, struct ltr390uv_state *sensor)
 
 int ltr390uv_read(hid_device *handle, struct ltr390uv_state *sensor)
 {
-    // switch to UV configuration
-    if (sensor->mode=='*' || sensor->mode=='U') {
-        sensor->uv_mode = 1;
-        ltr_autoscale(sensor);
-        setup_ltr390uv(handle, sensor);
+    switch (sensor->read_state) {
+    case MEASURING_UVB:
         sensor->uvs_raw = ltr390uv_read_raw(handle, sensor);
         ltr_raw_to_uv(sensor);
         update_stats(&sensor->uvs_stats, sensor->uv_uw);
-    }
-    
-    // switch to lux configuration
-    if (sensor->mode=='*' || sensor->mode=='L') {
-        sensor->uv_mode = 0;
-        ltr_autoscale(sensor);
-        setup_ltr390uv(handle, sensor);
+        break;
+    case MEASURING_ALS:
         sensor->als_raw = ltr390uv_read_raw(handle, sensor);
         ltr_raw_to_lux(sensor);
         update_stats(&sensor->als_stats, sensor->lux);
+        break;
+    }
+
+    switch (sensor->mode) {
+    case 'U':
+        sensor->read_state = MEASURING_UVB;
+        break;
+    case 'L':
+        sensor->read_state = MEASURING_ALS;
+        break;
+    case '*':
+        if (sensor->read_state == MEASURING_UVB) {
+            sensor->read_state = MEASURING_ALS;
+        } else {
+            sensor->read_state = MEASURING_UVB;
+        }
+        break;
+    }
+    if (sensor->read_state == MEASURING_UVB) {
+        sensor->uv_mode = 1;
+    } else {
+        sensor->uv_mode = 0;
+    }
+    ltr_autoscale(sensor);
+    setup_ltr390uv(handle, sensor, 0);
+    if (sensor->read_state == MEASURING_UVB) {
+        tick_sync_increment(&sensor->wait_until, ltr_rate_ms[sensor->uvs_rate]);
+    } else {
+        tick_sync_increment(&sensor->wait_until, ltr_rate_ms[sensor->als_rate]);
     }
     return 0;
 }
@@ -220,6 +259,8 @@ int ltr_autoscale(struct ltr390uv_state *sensor)
     // based on a lot of guesswork
     // could refactor this with a lot of pointers
     int needed = 0;
+    enum ltr_integration i;
+    enum ltr_rate r;
     double raw;
     double margin = 0.1;
     
@@ -242,6 +283,12 @@ int ltr_autoscale(struct ltr390uv_state *sensor)
             sensor->als_integration = ltr_less_int[sensor->als_integration];
             needed = 1;
         }
+        i = sensor->als_integration;
+        r = sensor->als_rate;
+        while (ltr_int_ms[i] > ltr_rate_ms[r]) {
+            r = ltr_slower_rate[r];
+        }
+        sensor->als_rate = r;
     }
 
     // uvs scaling
@@ -263,6 +310,12 @@ int ltr_autoscale(struct ltr390uv_state *sensor)
             sensor->uvs_integration = ltr_less_int[sensor->uvs_integration];
             needed = 1;
         }
+        i = sensor->uvs_integration;
+        r = sensor->uvs_rate;
+        while (ltr_int_ms[i] > ltr_rate_ms[r]) {
+            r = ltr_slower_rate[r];
+        }
+        sensor->uvs_rate = r;
     }
 
     return needed;

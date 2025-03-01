@@ -2,9 +2,16 @@
 #include <hidapi.h>
 #include "cp2112.h"
 #include "stats.h"
+#include "tick.h"
 #include "mlx90614.h"
 
-const int mlx90614_addresses[] = {ANY_ADDRESS, END_LIST};
+// Can potentially get 900 readings/second from this sensor.
+// There is a huge amount of IIR/FIR filtering options.
+// The exact integration time is hard to pin down.
+#define MLX_SAMPLE_TIME 200
+
+//const int mlx90614_addresses[] = {ANY_ADDRESS, END_LIST};
+const int mlx90614_addresses[] = {0x5A, END_LIST};
 
 double compute_celsius(int n)
 {
@@ -26,6 +33,7 @@ int mlx90614_read(hid_device *handle, struct mlx90614_state *sensor)
         sensor->t_obj = compute_celsius(i & 0xFFFF);
         update_stats(&sensor->t_obj_stats, sensor->t_obj);
     }
+    tick_sync_increment(&sensor->wait_until, MLX_SAMPLE_TIME);
     return 0;
 }
 
